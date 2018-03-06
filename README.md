@@ -7,6 +7,9 @@ merkerl
 
 A library for building and using [Merkle Trees](https://en.wikipedia.org/wiki/Merkle_tree).
 
+Why yet another Merkle Tree implementation? Mostly because other implementations didn't allow for pluggable hash functions, did not support proof generation or verification, tried to support mutable trees, or some combination of the above.
+
+
 Build
 -----
 
