@@ -13,7 +13,7 @@
 %% limitations under the License.
 
 {application, merkerl,
- [{description, "An Erlangng implementation of a merkle tree"},
+ [{description, "An Erlang implementation of a merkle tree"},
   {vsn, "git"},
   {registered, []},
   {applications, [kernel, stdlib]},
@@ -22,5 +22,5 @@
   %% hex.pm packaging:
   {licenses, ["Apache 2.0"]},
   {maintainers, ["Helium"]},
-  {links, [{"Github", "https://github.com/helium/erlang-merkle"}]}
+  {links, [{"Github", "https://github.com/helium/merklerl"}]}
  ]}.
