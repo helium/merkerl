@@ -187,14 +187,16 @@ gen_proof(ValueHash, #node{left=L, right=R}, Acc) ->
 
 %% @doc Verifies that a given hash of a value is in a given merkle
 %% tree using the provided proof.
--spec verify_proof(hash(), merkle(), proof() | {error, any()}) -> ok | {error, Reason} when
+-spec verify_proof(hash(), merkle() | hash(), proof() | {error, any()}) -> ok | {error, Reason} when
       Reason :: root_hash_mismatch
               | invalid_proof.
-verify_proof(_, #merkle{}, {error, _}) ->
+verify_proof(_, _, {error, _}) ->
     {error, invalid_proof};
 verify_proof(ValueHash, #merkle{root=Tree}, Proof) ->
+    verify_proof(ValueHash, tree_hash(Tree), Proof);
+verify_proof(ValueHash, RootHash, Proof) when is_binary(RootHash) ->
     ProofHash = verify_proof(ValueHash, Proof),
-    case ProofHash == tree_hash(Tree) of
+    case ProofHash == RootHash of
         true -> ok;
         false -> {error, root_hash_mismatch}
     end.
