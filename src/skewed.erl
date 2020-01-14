@@ -89,7 +89,7 @@ root_hash(#skewed{root=Tree}) ->
 
 %% @doc
 %% Get the height of the given skewed tree. This is a fast operation
-%% since the hash was calculated on construction of the tree.
+%% since the height was calculated on construction of the tree.
 %% @end
 -spec height(skewed()) -> non_neg_integer().
 height(#skewed{root=Tree}) ->
