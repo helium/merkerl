@@ -196,7 +196,7 @@ height_test() ->
         lists:seq(1, 10)
     ),
     ?assertEqual(10, height(Tree1)),
-    ?assertEqual(1, tree_height(#leaf{})),
+    ?assertEqual(1, tree_height(#leaf{hash= <<>>})),
     ok.
 
 count_test() ->
