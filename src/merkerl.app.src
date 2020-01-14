@@ -21,6 +21,5 @@
 
   %% hex.pm packaging:
   {licenses, ["Apache 2.0"]},
-  {maintainers, ["Helium"]},
   {links, [{"Github", "https://github.com/helium/merkerl"}]}
  ]}.
