@@ -10,7 +10,8 @@
 -endif.
 
 -export([
-    new/0, add/3, verify/3,
+    new/0, new/1,
+    add/3, verify/3,
     root_hash/1, height/1, count/1,
     hash_value/1
 ]).
@@ -49,6 +50,11 @@
 -spec new() -> skewed().
 new() ->
     #skewed{root=#empty{}, count=0}.
+
+-spec new(hash()) -> skewed().
+new(Hash) ->
+    Leaf = to_leaf(Hash),
+    #skewed{root=Leaf, count=0}.
 
 %% @doc
 %% Add/stack new value (leaf) on top and recalculate root hash.
@@ -153,6 +159,11 @@ tree_height(#empty{}) ->
 %% EUNIT Tests
 %% ------------------------------------------------------------------
 -ifdef(TEST).
+
+new_test() ->
+    Tree = new(<<1,2,3>>),
+    ?assertEqual(<<1,2,3>>, ?MODULE:root_hash(Tree)),
+    ?assertEqual(0, ?MODULE:count(Tree)).
 
 verify_test() ->
     HashFun = fun hash_value/1,
