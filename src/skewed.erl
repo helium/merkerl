@@ -126,7 +126,7 @@ hash_value(Value) ->
 %% @doc
 %% Check if the skewed tree contains a value.
 %% @end
--spec contains(skewed(), any()) -> boolean().
+-spec contains(skewed() | tree(), any()) -> boolean().
 contains(#skewed{count=0}, _Value) ->
     false;
 contains(#skewed{root=Tree}, Value) ->
