@@ -13,7 +13,8 @@
     new/0, new/1,
     add/3, verify/3,
     root_hash/1, height/1, count/1,
-    hash_value/1
+    hash_value/1,
+    contains/2
 ]).
 
 -record(skewed, {
@@ -33,8 +34,8 @@
 -record(node, {
     hash :: hash(),
     height = 0 :: non_neg_integer(),
-    left :: tree(),
-    right :: tree()
+    left :: #node{} | #empty{},
+    right :: leaf()
 }).
 
 -type hash() :: binary().
@@ -122,6 +123,23 @@ hash_value(Value) when is_binary(Value) ->
 hash_value(Value) ->
     hash_value(term_to_binary(Value)).
 
+%% @doc
+%% Check if the skewed tree contains a value.
+%% @end
+-spec contains(skewed(), any()) -> boolean().
+contains(#skewed{count=0}, _Value) ->
+    false;
+contains(#skewed{root=Tree}, Value) ->
+    Hash = hash_value(Value),
+    contains(Tree, Hash);
+contains(#empty{}, _) ->
+    false;
+contains(#node{right=#leaf{hash=Hash}}, Hash) ->
+    true;
+contains(#node{left=Left}, Hash) ->
+    contains(Left, Hash).
+
+
 %%====================================================================
 %% Internal functions
 %%====================================================================
@@ -182,6 +200,26 @@ verify_test() ->
     ?assert(verify(HashFun(Value), [Hash2] ++ ValueHashes, RootHash)),
     ?assertNot(verify(HashFun(Value), [], RootHash)),
     ?assert(verify(RootHash, [], RootHash)),
+    ok.
+
+contains_test() ->
+    HashFun = fun hash_value/1,
+    Size = 5,
+    Tree = lists:foldl(
+        fun(Value, Acc) ->
+            add(Value, HashFun, Acc)
+        end,
+        new(),
+        lists:seq(1, Size)
+    ),
+    ?assertEqual(true, contains(Tree, 1)),
+    ?assertEqual(true, contains(Tree, 2)),
+    ?assertEqual(true, contains(Tree, 3)),
+    ?assertEqual(true, contains(Tree, 4)),
+    ?assertEqual(true, contains(Tree, 5)),
+    ?assertEqual(false, contains(Tree, 6)),
+    ?assertEqual(false, contains(Tree, 0)),
+    ?assertEqual(false, contains(Tree, -1)),
     ok.
 
 height_test() ->
