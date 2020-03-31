@@ -220,6 +220,11 @@ contains_test() ->
     ?assertEqual(false, contains(Tree, 6)),
     ?assertEqual(false, contains(Tree, 0)),
     ?assertEqual(false, contains(Tree, -1)),
+
+    %% Check that empty tree contains no value
+    Tree2 = new(),
+    ?assertEqual(false, contains(Tree2, 10)),
+
     ok.
 
 height_test() ->
