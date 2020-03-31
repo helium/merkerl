@@ -212,18 +212,23 @@ contains_test() ->
         new(),
         lists:seq(1, Size)
     ),
-    ?assertEqual(true, contains(Tree, 1)),
-    ?assertEqual(true, contains(Tree, 2)),
-    ?assertEqual(true, contains(Tree, 3)),
-    ?assertEqual(true, contains(Tree, 4)),
-    ?assertEqual(true, contains(Tree, 5)),
-    ?assertEqual(false, contains(Tree, 6)),
-    ?assertEqual(false, contains(Tree, 0)),
-    ?assertEqual(false, contains(Tree, -1)),
+
+    ?assertEqual(true, lists:all(fun(I) ->
+                                         true == contains(Tree, I)
+                                 end,
+                                 lists:seq(1, Size))),
+
+    ?assertEqual(true, lists:all(fun(I) ->
+                                         false == contains(Tree, I)
+                                 end,
+                                 lists:seq(-10, 0))),
 
     %% Check that empty tree contains no value
     Tree2 = new(),
-    ?assertEqual(false, contains(Tree2, 10)),
+    ?assertEqual(true, lists:all(fun(I) ->
+                                         false == contains(Tree2, I)
+                                 end,
+                                 lists:seq(-1, 10))),
 
     ok.
 
