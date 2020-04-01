@@ -41,7 +41,7 @@
 -type hash() :: binary().
 -type skewed() :: #skewed{}.
 -type leaf() :: #leaf{}.
--type tree() :: #leaf{} | #empty{} | #node{}.
+-type tree() :: #empty{} | #node{}.
 
 -export_type([skewed/0, hash/0]).
 
@@ -54,8 +54,7 @@ new() ->
 
 -spec new(hash()) -> skewed().
 new(Hash) ->
-    Leaf = to_leaf(Hash),
-    #skewed{root=Leaf, count=0}.
+    #skewed{root=#empty{hash=Hash}, count=0}.
 
 %% @doc
 %% Add/stack new value (leaf) on top and recalculate root hash.
@@ -63,7 +62,7 @@ new(Hash) ->
 -spec add(any(), function(), skewed()) -> skewed().
 add(Value, HashFun, #skewed{root=Tree, count=Count}=Skewed) ->
     Leaf = to_leaf(Value, HashFun),
-    Node = to_node(Tree, Leaf, tree_hash(Tree), tree_hash(Leaf), Count),
+    Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), Count),
     Skewed#skewed{root=Node, count=Count+1}.
 
 %% @doc
@@ -74,14 +73,14 @@ add(Value, HashFun, #skewed{root=Tree, count=Count}=Skewed) ->
 verify(HashToVerify, [], RootHash) ->
     HashToVerify == RootHash;
 verify(HashToVerify, [FirstHash|Hashes], RootHash) ->
-    FirstLeaf = #leaf{hash=FirstHash, value=undefined},
+    FirstEmpty = #empty{hash=FirstHash},
     Skewed = lists:foldl(
         fun(Hash, #skewed{root=Tree, count=Count}=Acc) ->
             Leaf = to_leaf(Hash),
-            Node = to_node(Tree, Leaf, tree_hash(Tree), tree_hash(Leaf), Count),
+            Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), Count),
             Acc#skewed{root=Node, count=Count+1}
         end,
-        #skewed{root=FirstLeaf, count=0},
+        #skewed{root=FirstEmpty, count=0},
         [HashToVerify|Hashes]
     ),
     ?MODULE:root_hash(Skewed) == RootHash.
@@ -152,15 +151,17 @@ to_leaf(Hash) ->
 to_leaf(Value, HashFun) ->
     #leaf{value=Value, hash=HashFun(Value)}.
 
--spec to_node(tree(), tree(), hash(), hash(), non_neg_integer()) -> tree().
+-spec to_node(tree(), leaf(), hash(), hash(), non_neg_integer()) -> tree().
 to_node(L, R, LHash, RHash, Height) ->
     Hash = crypto:hash(sha256, <<LHash/binary, RHash/binary>>),
     #node{left=L, right=R, height=Height+1, hash=Hash}.
 
+-spec leaf_hash(leaf()) -> hash().
+leaf_hash(#leaf{hash=Hash}) ->
+    Hash.
+
 -spec tree_hash(tree()) -> hash().
 tree_hash(#node{hash=Hash}) ->
-    Hash;
-tree_hash(#leaf{hash=Hash}) ->
     Hash;
 tree_hash(#empty{hash=Hash}) ->
     Hash.
@@ -168,8 +169,6 @@ tree_hash(#empty{hash=Hash}) ->
 -spec tree_height(tree()) -> non_neg_integer().
 tree_height(#node{height=Height}) ->
     Height;
-tree_height(#leaf{}) ->
-    1;
 tree_height(#empty{}) ->
     0.
 
@@ -243,8 +242,19 @@ height_test() ->
         new(),
         lists:seq(1, 10)
     ),
+    io:format("Tree1: ~p~n", [Tree1]),
     ?assertEqual(10, height(Tree1)),
-    ?assertEqual(1, tree_height(#leaf{hash= <<>>})),
+    ?assertEqual(0, tree_height(#empty{hash= <<>>})),
+    ok.
+
+construct_test() ->
+    HashFun = fun hash_value/1,
+    Tree0 = new(crypto:hash(sha256, "yolo")),
+    ?assertEqual(0, height(Tree0)),
+    Tree1 = add("hello", HashFun, Tree0),
+    ?assertEqual(1, height(Tree1)),
+    Tree2 = add("namaste", HashFun, Tree1),
+    ?assertEqual(2, height(Tree2)),
     ok.
 
 count_test() ->
