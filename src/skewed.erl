@@ -1,6 +1,6 @@
 %% @doc A module with a skewed merkle tree implementation as described
 %% in https://medium.com/codechain/skewed-merkle-tree-259b984acc0c.
-%% This module implements a skewed merkle tree where value can be added/stacked via add/3,
+%% This module implements a skewed merkle tree where value can be added/stacked via add/2,
 %% the time and memory it takes to create is linearly proportional to the number of values.
 
 -module(skewed).
@@ -10,21 +10,15 @@
 -endif.
 
 -export([
-    new/0, new/1,
-    add/3, verify/3,
+    new/0, new/1, new/2,
+    add/2, gen_proof/2, verify_proof/3,
     root_hash/1, height/1, count/1,
-    hash_value/1,
+    hash_value/2,
     contains/2
 ]).
 
--record(skewed, {
-    root :: tree(),
-    count = 0 :: non_neg_integer()
-}).
-
 -record(leaf, {
-    hash :: hash(),
-    value :: any()
+    hash :: hash()
 }).
 
 -record(empty, {
@@ -38,52 +32,87 @@
     right :: leaf()
 }).
 
+-record(skewed, {
+    root = #empty{} :: tree(),
+    count = 0 :: non_neg_integer(),
+    hash_function = fun hash_value/2 :: hash_function()
+}).
+
 -type hash() :: binary().
 -type skewed() :: #skewed{}.
 -type leaf() :: #leaf{}.
 -type tree() :: #empty{} | #node{}.
 
--export_type([skewed/0, hash/0]).
+-define(LEAF_PREFIX, 0).
+-define(NODE_PREFIX, 1).
+
+-type hash_function() :: fun((term(), 0 | 1) -> hash()).
+
+-export_type([skewed/0, hash/0, hash_function/0]).
 
 %% @doc
 %% Create new empty skewed merkle tree.
 %% @end
 -spec new() -> skewed().
 new() ->
-    #skewed{root=#empty{}, count=0}.
+    #skewed{}.
 
--spec new(hash()) -> skewed().
-new(Hash) ->
-    #skewed{root=#empty{hash=Hash}, count=0}.
+-spec new(hash() | hash_function()) -> skewed().
+new(Hash) when is_binary(Hash) ->
+    #skewed{root=#empty{hash=Hash}};
+new(HashFunction) when is_function(HashFunction) ->
+    #skewed{hash_function=HashFunction}.
+
+-spec new(hash(), hash_function()) -> skewed().
+new(Hash, HashFunction) ->
+    #skewed{root=#empty{hash=Hash}, hash_function=HashFunction}.
 
 %% @doc
 %% Add/stack new value (leaf) on top and recalculate root hash.
 %% @end
--spec add(any(), function(), skewed()) -> skewed().
-add(Value, HashFun, #skewed{root=Tree, count=Count}=Skewed) ->
+-spec add(any(), skewed()) -> skewed().
+add(Value, #skewed{root=Tree, count=Count, hash_function=HashFun}=Skewed) ->
     Leaf = to_leaf(Value, HashFun),
-    Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), Count),
+    Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), HashFun, Count),
     Skewed#skewed{root=Node, count=Count+1}.
+
+%% @doc
+%% Generate a proof that `Value' appears in `Tree' by returning the list of
+%% required sibling hashes and the root hash of the tree.
+%% @end
+-spec gen_proof(any(), skewed()) -> not_found | [hash(),...].
+gen_proof(_Value, #skewed{count=0}) ->
+    not_found;
+gen_proof(Value, #skewed{root=Tree, hash_function=HashFun}) ->
+    Hash = HashFun(Value, ?LEAF_PREFIX),
+    case contains(Tree, Hash, [tree_hash(Tree)]) of
+        false -> not_found;
+        Proof -> Proof
+    end.
+
 
 %% @doc
 %% Verify will check that the HashToVerify is correctly in the tree with the provided,
 %% in order, lists of hashes (proof) and compare it to the RootHash.
 %% @end
--spec verify(hash(), [hash()], hash()) -> boolean().
-verify(HashToVerify, [], RootHash) ->
+-spec verify_proof(hash(), hash_function(), [hash(),...]) -> boolean().
+verify_proof(HashToVerify, _HashFun, [RootHash]) ->
     HashToVerify == RootHash;
-verify(HashToVerify, [FirstHash|Hashes], RootHash) ->
+verify_proof(HashToVerify, HashFun, [FirstHash|Hashes]) ->
+    RH = lists:last(Hashes),
     FirstEmpty = #empty{hash=FirstHash},
-    Skewed = lists:foldl(
-        fun(Hash, #skewed{root=Tree, count=Count}=Acc) ->
-            Leaf = to_leaf(Hash),
-            Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), Count),
-            Acc#skewed{root=Node, count=Count+1}
+    Result = lists:foldl(
+        fun(RootHash, Acc) when RootHash == RH ->
+                ?MODULE:root_hash(Acc) == RootHash;
+            (Hash, #skewed{root=Tree, count=Count}=Acc) ->
+                Leaf = to_leaf(Hash),
+                Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), HashFun, Count),
+                Acc#skewed{root=Node, count=Count+1}
         end,
         #skewed{root=FirstEmpty, count=0},
         [HashToVerify|Hashes]
     ),
-    ?MODULE:root_hash(Skewed) == RootHash.
+    Result == true.
 
 %% @doc
 %% Gets the root hash of the given skewed tree. This is a fast
@@ -116,11 +145,11 @@ count(#skewed{count=Count}) ->
 %% the non-binary form if the resulting trees or proofs are to be sent
 %% over a network.
 %% @end
--spec hash_value(any()) -> hash().
-hash_value(Value) when is_binary(Value) ->
-    crypto:hash(sha256, Value);
-hash_value(Value) ->
-    hash_value(term_to_binary(Value)).
+-spec hash_value(any(), 0 | 1) -> hash().
+hash_value(Value, Prefix) when is_binary(Value) ->
+    crypto:hash(sha256, <<Prefix:8/integer, Value/binary>>);
+hash_value(Value, Prefix) ->
+    hash_value(term_to_binary(Value), Prefix).
 
 %% @doc
 %% Check if the skewed tree contains a value.
@@ -129,31 +158,35 @@ hash_value(Value) ->
 contains(#skewed{count=0}, _Value) ->
     false;
 contains(#skewed{root=Tree}, Value) ->
-    Hash = hash_value(Value),
-    contains(Tree, Hash);
-contains(#empty{}, _) ->
-    false;
-contains(#node{right=#leaf{hash=Hash}}, Hash) ->
-    true;
-contains(#node{left=Left}, Hash) ->
-    contains(Left, Hash).
-
+    Hash = hash_value(Value, ?LEAF_PREFIX),
+    case contains(Tree, Hash, []) of
+        false -> false;
+        _ -> true
+    end.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
 
+-spec contains(tree(), hash(), [hash()]) -> false | [hash(),...].
+contains(#empty{}, _, _Acc) ->
+    false;
+contains(#node{right=#leaf{hash=Hash}, left=Left}, Hash, Acc) ->
+    [tree_hash(Left)|Acc];
+contains(#node{left=Left, right=#leaf{hash=RightHash}}, Hash, Acc) ->
+    contains(Left, Hash, [RightHash|Acc]).
+
 -spec to_leaf(hash()) -> leaf().
 to_leaf(Hash) ->
-    #leaf{hash=Hash, value=undefined}.
+    #leaf{hash=Hash}.
 
--spec to_leaf(term(), fun((term()) -> hash())) -> leaf().
+-spec to_leaf(term(), hash_function()) -> leaf().
 to_leaf(Value, HashFun) ->
-    #leaf{value=Value, hash=HashFun(Value)}.
+    #leaf{hash=HashFun(Value, ?LEAF_PREFIX)}.
 
--spec to_node(tree(), leaf(), hash(), hash(), non_neg_integer()) -> tree().
-to_node(L, R, LHash, RHash, Height) ->
-    Hash = crypto:hash(sha256, <<LHash/binary, RHash/binary>>),
+-spec to_node(tree(), leaf(), hash(), hash(), hash_function(), non_neg_integer()) -> tree().
+to_node(L, R, LHash, RHash, HashFun, Height) ->
+    Hash = HashFun(<<LHash/binary, RHash/binary>>, ?NODE_PREFIX),
     #node{left=L, right=R, height=Height+1, hash=Hash}.
 
 -spec leaf_hash(leaf()) -> hash().
@@ -183,30 +216,48 @@ new_test() ->
     ?assertEqual(0, ?MODULE:count(Tree)).
 
 verify_test() ->
-    HashFun = fun hash_value/1,
+    HashFun = fun hash_value/2,
     Size = 5,
     Tree = lists:foldl(
         fun(Value, Acc) ->
-            add(Value, HashFun, Acc)
+            add(Value, Acc)
         end,
         new(),
         lists:seq(1, Size)
     ),
     RootHash = ?MODULE:root_hash(Tree),
     Value = 3,
-    Hash2 = <<55,252,129,255,194,115,98,103,168,132,199,77,143,180,26,174,29,219,145,126,179,56,47,160,125,10,249,248,75,49,96,253>>,
-    ValueHashes = lists:foldr(fun(V, A) -> [HashFun(V)|A] end, [], lists:seq(Value+1, Size)),
-    ?assert(verify(HashFun(Value), [Hash2] ++ ValueHashes, RootHash)),
-    ?assertNot(verify(HashFun(Value), [], RootHash)),
-    ?assert(verify(RootHash, [], RootHash)),
+    %% this is the hash of the node adjacent to the leaf with value 3 (`Value')
+    Hash2 = <<253,49,101,79,133,255,101,251,21,117,172,62,98,57,87,84,34,25,155,89,71,139,184,212,1,255,127,234,83,163,195,155>>,
+    ValueHashes = lists:foldr(fun(V, A) -> [HashFun(V, ?LEAF_PREFIX)|A] end, [], lists:seq(Value+1, Size)),
+    ExpectedProof = [Hash2] ++ ValueHashes ++ [RootHash],
+    ?assertEqual(ExpectedProof, gen_proof(Value, Tree)),
+    ?assert(verify_proof(HashFun(Value, ?LEAF_PREFIX), HashFun, ExpectedProof)),
+    ?assertNot(verify_proof(HashFun(Value, ?LEAF_PREFIX), HashFun, [RootHash])),
+    ?assert(verify_proof(RootHash, HashFun, [RootHash])),
     ok.
 
-contains_test() ->
-    HashFun = fun hash_value/1,
+proof_test() ->
+    HashFun = fun hash_value/2,
+    ?assertEqual(not_found, gen_proof(lol, new())),
     Size = 5,
     Tree = lists:foldl(
         fun(Value, Acc) ->
-            add(Value, HashFun, Acc)
+            add(Value, Acc)
+        end,
+        new(HashFun(7, ?LEAF_PREFIX)),
+        lists:seq(1, Size)
+    ),
+    ?assertEqual(not_found, gen_proof(10, Tree)),
+    ?assertNotEqual(not_found, gen_proof(2, Tree)),
+    ?assertEqual(not_found, gen_proof(7, Tree)),
+    ok.
+
+contains_test() ->
+    Size = 5,
+    Tree = lists:foldl(
+        fun(Value, Acc) ->
+            add(Value, Acc)
         end,
         new(),
         lists:seq(1, Size)
@@ -232,12 +283,11 @@ contains_test() ->
     ok.
 
 height_test() ->
-    HashFun = fun hash_value/1,
     Tree0 = new(),
     ?assertEqual(0, height(Tree0)),
     Tree1 = lists:foldl(
         fun(Value, Acc) ->
-            add(Value, HashFun, Acc)
+            add(Value, Acc)
         end,
         new(),
         lists:seq(1, 10)
@@ -248,22 +298,20 @@ height_test() ->
     ok.
 
 construct_test() ->
-    HashFun = fun hash_value/1,
     Tree0 = new(crypto:hash(sha256, "yolo")),
     ?assertEqual(0, height(Tree0)),
-    Tree1 = add("hello", HashFun, Tree0),
+    Tree1 = add("hello", Tree0),
     ?assertEqual(1, height(Tree1)),
-    Tree2 = add("namaste", HashFun, Tree1),
+    Tree2 = add("namaste", Tree1),
     ?assertEqual(2, height(Tree2)),
     ok.
 
 count_test() ->
-    HashFun = fun hash_value/1,
     Tree0 = new(),
     ?assertEqual(0, count(Tree0)),
     Tree1 = lists:foldl(
         fun(Value, Acc) ->
-            add(Value, HashFun, Acc)
+            add(Value, Acc)
         end,
         new(),
         lists:seq(1, 10)
