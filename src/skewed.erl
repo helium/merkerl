@@ -13,7 +13,8 @@
     new/0, new/1,
     add/3, verify/3,
     root_hash/1, height/1, count/1,
-    hash_value/1
+    hash_value/1,
+    contains/2
 ]).
 
 -record(skewed, {
@@ -33,14 +34,14 @@
 -record(node, {
     hash :: hash(),
     height = 0 :: non_neg_integer(),
-    left :: tree(),
-    right :: tree()
+    left :: #node{} | #empty{},
+    right :: leaf()
 }).
 
 -type hash() :: binary().
 -type skewed() :: #skewed{}.
 -type leaf() :: #leaf{}.
--type tree() :: #leaf{} | #empty{} | #node{}.
+-type tree() :: #empty{} | #node{}.
 
 -export_type([skewed/0, hash/0]).
 
@@ -53,8 +54,7 @@ new() ->
 
 -spec new(hash()) -> skewed().
 new(Hash) ->
-    Leaf = to_leaf(Hash),
-    #skewed{root=Leaf, count=0}.
+    #skewed{root=#empty{hash=Hash}, count=0}.
 
 %% @doc
 %% Add/stack new value (leaf) on top and recalculate root hash.
@@ -62,7 +62,7 @@ new(Hash) ->
 -spec add(any(), function(), skewed()) -> skewed().
 add(Value, HashFun, #skewed{root=Tree, count=Count}=Skewed) ->
     Leaf = to_leaf(Value, HashFun),
-    Node = to_node(Tree, Leaf, tree_hash(Tree), tree_hash(Leaf), Count),
+    Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), Count),
     Skewed#skewed{root=Node, count=Count+1}.
 
 %% @doc
@@ -73,14 +73,14 @@ add(Value, HashFun, #skewed{root=Tree, count=Count}=Skewed) ->
 verify(HashToVerify, [], RootHash) ->
     HashToVerify == RootHash;
 verify(HashToVerify, [FirstHash|Hashes], RootHash) ->
-    FirstLeaf = #leaf{hash=FirstHash, value=undefined},
+    FirstEmpty = #empty{hash=FirstHash},
     Skewed = lists:foldl(
         fun(Hash, #skewed{root=Tree, count=Count}=Acc) ->
             Leaf = to_leaf(Hash),
-            Node = to_node(Tree, Leaf, tree_hash(Tree), tree_hash(Leaf), Count),
+            Node = to_node(Tree, Leaf, tree_hash(Tree), leaf_hash(Leaf), Count),
             Acc#skewed{root=Node, count=Count+1}
         end,
-        #skewed{root=FirstLeaf, count=0},
+        #skewed{root=FirstEmpty, count=0},
         [HashToVerify|Hashes]
     ),
     ?MODULE:root_hash(Skewed) == RootHash.
@@ -122,6 +122,23 @@ hash_value(Value) when is_binary(Value) ->
 hash_value(Value) ->
     hash_value(term_to_binary(Value)).
 
+%% @doc
+%% Check if the skewed tree contains a value.
+%% @end
+-spec contains(skewed() | tree(), any()) -> boolean().
+contains(#skewed{count=0}, _Value) ->
+    false;
+contains(#skewed{root=Tree}, Value) ->
+    Hash = hash_value(Value),
+    contains(Tree, Hash);
+contains(#empty{}, _) ->
+    false;
+contains(#node{right=#leaf{hash=Hash}}, Hash) ->
+    true;
+contains(#node{left=Left}, Hash) ->
+    contains(Left, Hash).
+
+
 %%====================================================================
 %% Internal functions
 %%====================================================================
@@ -134,15 +151,17 @@ to_leaf(Hash) ->
 to_leaf(Value, HashFun) ->
     #leaf{value=Value, hash=HashFun(Value)}.
 
--spec to_node(tree(), tree(), hash(), hash(), non_neg_integer()) -> tree().
+-spec to_node(tree(), leaf(), hash(), hash(), non_neg_integer()) -> tree().
 to_node(L, R, LHash, RHash, Height) ->
     Hash = crypto:hash(sha256, <<LHash/binary, RHash/binary>>),
     #node{left=L, right=R, height=Height+1, hash=Hash}.
 
+-spec leaf_hash(leaf()) -> hash().
+leaf_hash(#leaf{hash=Hash}) ->
+    Hash.
+
 -spec tree_hash(tree()) -> hash().
 tree_hash(#node{hash=Hash}) ->
-    Hash;
-tree_hash(#leaf{hash=Hash}) ->
     Hash;
 tree_hash(#empty{hash=Hash}) ->
     Hash.
@@ -150,8 +169,6 @@ tree_hash(#empty{hash=Hash}) ->
 -spec tree_height(tree()) -> non_neg_integer().
 tree_height(#node{height=Height}) ->
     Height;
-tree_height(#leaf{}) ->
-    1;
 tree_height(#empty{}) ->
     0.
 
@@ -184,6 +201,36 @@ verify_test() ->
     ?assert(verify(RootHash, [], RootHash)),
     ok.
 
+contains_test() ->
+    HashFun = fun hash_value/1,
+    Size = 5,
+    Tree = lists:foldl(
+        fun(Value, Acc) ->
+            add(Value, HashFun, Acc)
+        end,
+        new(),
+        lists:seq(1, Size)
+    ),
+
+    ?assertEqual(true, lists:all(fun(I) ->
+                                         true == contains(Tree, I)
+                                 end,
+                                 lists:seq(1, Size))),
+
+    ?assertEqual(true, lists:all(fun(I) ->
+                                         false == contains(Tree, I)
+                                 end,
+                                 lists:seq(-10, 0))),
+
+    %% Check that empty tree contains no value
+    Tree2 = new(),
+    ?assertEqual(true, lists:all(fun(I) ->
+                                         false == contains(Tree2, I)
+                                 end,
+                                 lists:seq(-1, 10))),
+
+    ok.
+
 height_test() ->
     HashFun = fun hash_value/1,
     Tree0 = new(),
@@ -195,8 +242,19 @@ height_test() ->
         new(),
         lists:seq(1, 10)
     ),
+    io:format("Tree1: ~p~n", [Tree1]),
     ?assertEqual(10, height(Tree1)),
-    ?assertEqual(1, tree_height(#leaf{hash= <<>>})),
+    ?assertEqual(0, tree_height(#empty{hash= <<>>})),
+    ok.
+
+construct_test() ->
+    HashFun = fun hash_value/1,
+    Tree0 = new(crypto:hash(sha256, "yolo")),
+    ?assertEqual(0, height(Tree0)),
+    Tree1 = add("hello", HashFun, Tree0),
+    ?assertEqual(1, height(Tree1)),
+    Tree2 = add("namaste", HashFun, Tree1),
+    ?assertEqual(2, height(Tree2)),
     ok.
 
 count_test() ->
