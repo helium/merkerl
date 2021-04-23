@@ -1,5 +1,5 @@
 .PHONY: compile cover test typecheck xref check doc
-REBAR=./rebar3
+REBAR=rebar3
 
 compile:
 	$(REBAR) compile
